@@ -1,25 +1,32 @@
 var express = require('express'),
     app = express(),
-    mongoose = require('mongoose'),
     Docker = require('dockerode'),
     moment = require('moment');
+var kue = require('kue'),
+    queue = kue.createQueue({
+        redis: 'redis://toto@redis-14773.c3.eu-west-1-2.ec2.cloud.redislabs.com:14773'
+    });
 
 var docker = new Docker();
-mongoose.connect('mongodb://admin:oooP.6th@ds113650.mlab.com:13650/healthbook');
 
-const HAR_GENERATING_TIME = 3000;
+const HAR_GENERATING_TIME = 3000,
+    DOCKER_INSTANCES = 2;
 
-function launchReport(url){
+
+queue.process('report', function(job, done){
+    console.log("During processing")
+  processReport(job.data.url, done);
+});
+
+function processReport(url, done){
     var urlToReport = cleanUrl = url;
 
     if (urlToReport.substr(0, 7) == "http://")
         cleanUrl = urlToReport.substr(7);
-
     var saveDir = "browsertime-results/" + cleanUrl + moment().toISOString();
-
     var snippet = "return new Date().valueOf() > window.performance.timing.loadEventEnd + " + HAR_GENERATING_TIME;
-    console.log("cleanUrl: ",cleanUrl, " urlToReport: ", urlToReport);
-    var prom = new Promise(function(resolve, reject){
+
+   return new Promise(function(resolve, reject){
         docker.run('sitespeedio/browsertime', [urlToReport, '-n', '1', '--resultDir', saveDir, '--pageCompleteCheck', snippet], process.stdout, {
             Volumes: {[__dirname]: {}},
             HostConfig: {
@@ -38,31 +45,8 @@ function launchReport(url){
                 resolve({data, path: saveDir});
             }
         });
-    });
-    console.log("Blocking?");
-    return prom;
+    }).then((data, path) => {
+        console.log("DONE");
+        done();  
+    }); 
 }
-
-
-app.post('/', function (req, res) {
-    var url = req.query.url;
-    console.log("query url: ", url);
-    res.send("OK");
-    launchReport(url).then(function(result){
-        console.log("End Process: ", result);
-
-        
-    });
-});
-
-var port = process.env.PORT || 3000;
-app.listen(port, function () {
-  console.log('Example app listening on port ', port);
-});
-
-
-//docker run --privileged --shm-size=1g --rm 
-//-v "$(pwd)":/browsertime-results sitespeedio/browsertime -n 1 -c cable 
-//--video --speedIndex 
-//--pageCompleteCheck 'return new Date().valueOf() > window.performance.timing.loadEventEnd + 30000' 
-//https://www.sitespeed.io/
